@@ -1,38 +1,73 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, Wifi, HardDrive, Cpu, Thermometer } from 'lucide-react';
+import { Monitor, Wifi, HardDrive, Cpu, Thermometer, AlertCircle, RefreshCw } from 'lucide-react';
+
+interface SystemInfo {
+  ipAddress: string;
+  cpuUsage: number;
+  memoryUsage: number;
+  diskUsage: number;
+  temperature: number;
+  uptime: string;
+  timestamp?: number;
+  error?: string;
+}
 
 interface SystemStatusProps {
   isDark: boolean;
 }
 
 export default function SystemStatus({ isDark }: SystemStatusProps) {
-  const [systemInfo, setSystemInfo] = useState({
-    ipAddress: '192.168.1.125',
+  const [systemInfo, setSystemInfo] = useState<SystemInfo>({
+    ipAddress: '127.0.0.1',
     cpuUsage: 0,
     memoryUsage: 0,
     diskUsage: 0,
     temperature: 0,
-    uptime: '2d 14h 32m'
+    uptime: '0d 0h 0m'
   });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  const updateSystemInfo = useCallback(() => {
-    setSystemInfo(prev => ({
-      ...prev,
-      cpuUsage: Math.random() * 100,
-      memoryUsage: 35 + Math.random() * 20,
-      diskUsage: 42 + Math.random() * 10,
-      temperature: 45 + Math.random() * 15
-    }));
+  const fetchSystemInfo = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/system-info');
+      if (response.ok) {
+        const data = await response.json();
+        setSystemInfo(data);
+        setIsOnline(true);
+        setLastUpdate(new Date());
+      } else {
+        throw new Error('Failed to fetch system info');
+      }
+    } catch (error) {
+      console.error('Error fetching system info:', error);
+      setIsOnline(false);
+      // Keep the last known data but mark as offline
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(updateSystemInfo, 3000);
+    // Initial fetch
+    fetchSystemInfo();
+
+    // Set up interval for regular updates
+    const interval = setInterval(fetchSystemInfo, 3000);
+
     return () => clearInterval(interval);
-  }, [updateSystemInfo]);
+  }, [fetchSystemInfo]);
 
   const getUsageColor = useCallback((usage: number) => {
     if (usage < 50) return isDark ? 'text-green-400' : 'text-green-600';
     if (usage < 80) return isDark ? 'text-yellow-400' : 'text-yellow-600';
+    return isDark ? 'text-red-400' : 'text-red-600';
+  }, [isDark]);
+
+  const getTemperatureColor = useCallback((temp: number) => {
+    if (temp < 50) return isDark ? 'text-green-400' : 'text-green-600';
+    if (temp < 70) return isDark ? 'text-yellow-400' : 'text-yellow-600';
     return isDark ? 'text-red-400' : 'text-red-600';
   }, [isDark]);
 
@@ -48,7 +83,9 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Monitor className={`h-5 w-5 ${
-              isDark ? 'text-green-400' : 'text-green-600'
+              isOnline 
+                ? isDark ? 'text-green-400' : 'text-green-600'
+                : isDark ? 'text-red-400' : 'text-red-600'
             }`} />
             <h3 className={`text-lg font-semibold ${
               isDark ? 'text-white' : 'text-gray-900'
@@ -57,17 +94,60 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             </h3>
           </div>
           <div className="flex items-center space-x-2">
-            <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className={`text-xs ${
-              isDark ? 'text-green-400' : 'text-green-600'
-            }`}>
-              Online
-            </span>
+            {isLoading ? (
+              <RefreshCw className={`h-3 w-3 animate-spin ${
+                isDark ? 'text-gray-400' : 'text-gray-500'
+              }`} />
+            ) : (
+              <>
+                <div className={`h-2 w-2 rounded-full ${
+                  isOnline 
+                    ? 'bg-green-500 animate-pulse' 
+                    : 'bg-red-500'
+                }`}></div>
+                <span className={`text-xs ${
+                  isOnline 
+                    ? isDark ? 'text-green-400' : 'text-green-600'
+                    : isDark ? 'text-red-400' : 'text-red-600'
+                }`}>
+                  {isOnline ? 'Live Data' : 'Offline'}
+                </span>
+              </>
+            )}
           </div>
         </div>
+        {lastUpdate && (
+          <p className={`text-xs mt-1 ${
+            isDark ? 'text-gray-500' : 'text-gray-400'
+          }`}>
+            Last updated: {lastUpdate.toLocaleTimeString()}
+          </p>
+        )}
       </div>
 
       <div className="p-4">
+        {!isOnline && !isLoading && (
+          <div className={`p-3 rounded mb-4 flex items-center space-x-2 ${
+            isDark ? 'bg-red-900/20 border border-red-800' : 'bg-red-50 border border-red-200'
+          }`}>
+            <AlertCircle className={`h-4 w-4 ${
+              isDark ? 'text-red-400' : 'text-red-600'
+            }`} />
+            <div>
+              <p className={`text-sm font-medium ${
+                isDark ? 'text-red-400' : 'text-red-600'
+              }`}>
+                System API Offline
+              </p>
+              <p className={`text-xs ${
+                isDark ? 'text-red-300' : 'text-red-500'
+              }`}>
+                Run "npm run server" to start the system monitoring service
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3">
           <div className={`p-3 rounded ${
             isDark ? 'bg-gray-700' : 'bg-gray-50'
@@ -114,7 +194,7 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             }`}>
               <div
                 className="h-1.5 rounded-full bg-purple-500 transition-all duration-500"
-                style={{ width: `${systemInfo.cpuUsage}%` }}
+                style={{ width: `${Math.min(systemInfo.cpuUsage, 100)}%` }}
               ></div>
             </div>
           </div>
@@ -144,7 +224,37 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             }`}>
               <div
                 className="h-1.5 rounded-full bg-orange-500 transition-all duration-500"
-                style={{ width: `${systemInfo.memoryUsage}%` }}
+                style={{ width: `${Math.min(systemInfo.memoryUsage, 100)}%` }}
+              ></div>
+            </div>
+          </div>
+
+          <div className={`p-3 rounded ${
+            isDark ? 'bg-gray-700' : 'bg-gray-50'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center space-x-2">
+                <HardDrive className={`h-4 w-4 ${
+                  isDark ? 'text-cyan-400' : 'text-cyan-600'
+                }`} />
+                <span className={`text-sm font-medium ${
+                  isDark ? 'text-white' : 'text-gray-900'
+                }`}>
+                  Disk
+                </span>
+              </div>
+              <span className={`text-xs font-mono ${
+                getUsageColor(systemInfo.diskUsage)
+              }`}>
+                {systemInfo.diskUsage.toFixed(1)}%
+              </span>
+            </div>
+            <div className={`h-1.5 rounded-full ${
+              isDark ? 'bg-gray-600' : 'bg-gray-200'
+            }`}>
+              <div
+                className="h-1.5 rounded-full bg-cyan-500 transition-all duration-500"
+                style={{ width: `${Math.min(systemInfo.diskUsage, 100)}%` }}
               ></div>
             </div>
           </div>
@@ -160,13 +270,11 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
                 <span className={`text-sm font-medium ${
                   isDark ? 'text-white' : 'text-gray-900'
                 }`}>
-                  Temp
+                  Temperature
                 </span>
               </div>
               <span className={`text-sm font-mono ${
-                systemInfo.temperature > 60 
-                  ? isDark ? 'text-red-400' : 'text-red-600'
-                  : isDark ? 'text-green-400' : 'text-green-600'
+                getTemperatureColor(systemInfo.temperature)
               }`}>
                 {systemInfo.temperature.toFixed(1)}°C
               </span>
