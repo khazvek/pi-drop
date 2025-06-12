@@ -28,22 +28,27 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchSystemInfo = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/system-info');
+      const response = await fetch('/api/system-info');
       if (response.ok) {
         const data = await response.json();
         setSystemInfo(data);
         setIsOnline(true);
         setLastUpdate(new Date());
+        setError(data.error || null);
       } else {
-        throw new Error('Failed to fetch system info');
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-    } catch (error) {
-      console.error('Error fetching system info:', error);
+    } catch (fetchError) {
+      console.error('Error fetching system info:', fetchError);
       setIsOnline(false);
+      setError(fetchError instanceof Error ? fetchError.message : 'Unknown error');
+      
       // Keep the last known data but mark as offline
+      // Don't reset systemInfo to preserve last known values
     } finally {
       setIsLoading(false);
     }
@@ -127,22 +132,46 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
 
       <div className="p-4">
         {!isOnline && !isLoading && (
-          <div className={`p-3 rounded mb-4 flex items-center space-x-2 ${
+          <div className={`p-3 rounded mb-4 flex items-start space-x-2 ${
             isDark ? 'bg-red-900/20 border border-red-800' : 'bg-red-50 border border-red-200'
           }`}>
-            <AlertCircle className={`h-4 w-4 ${
+            <AlertCircle className={`h-4 w-4 mt-0.5 flex-shrink-0 ${
               isDark ? 'text-red-400' : 'text-red-600'
             }`} />
-            <div>
+            <div className="min-w-0">
               <p className={`text-sm font-medium ${
                 isDark ? 'text-red-400' : 'text-red-600'
               }`}>
                 System API Offline
               </p>
-              <p className={`text-xs ${
+              <p className={`text-xs mt-1 ${
                 isDark ? 'text-red-300' : 'text-red-500'
               }`}>
-                Run "npm run server" to start the system monitoring service
+                Run "npm run server" in a new terminal to start the system monitoring service
+              </p>
+              {error && (
+                <p className={`text-xs mt-1 font-mono ${
+                  isDark ? 'text-red-200' : 'text-red-400'
+                }`}>
+                  Error: {error}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {systemInfo.error && isOnline && (
+          <div className={`p-3 rounded mb-4 flex items-start space-x-2 ${
+            isDark ? 'bg-yellow-900/20 border border-yellow-800' : 'bg-yellow-50 border border-yellow-200'
+          }`}>
+            <AlertCircle className={`h-4 w-4 mt-0.5 flex-shrink-0 ${
+              isDark ? 'text-yellow-400' : 'text-yellow-600'
+            }`} />
+            <div className="min-w-0">
+              <p className={`text-xs ${
+                isDark ? 'text-yellow-300' : 'text-yellow-600'
+              }`}>
+                {systemInfo.error}
               </p>
             </div>
           </div>
@@ -194,7 +223,7 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             }`}>
               <div
                 className="h-1.5 rounded-full bg-purple-500 transition-all duration-500"
-                style={{ width: `${Math.min(systemInfo.cpuUsage, 100)}%` }}
+                style={{ width: `${Math.min(Math.max(systemInfo.cpuUsage, 0), 100)}%` }}
               ></div>
             </div>
           </div>
@@ -224,7 +253,7 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             }`}>
               <div
                 className="h-1.5 rounded-full bg-orange-500 transition-all duration-500"
-                style={{ width: `${Math.min(systemInfo.memoryUsage, 100)}%` }}
+                style={{ width: `${Math.min(Math.max(systemInfo.memoryUsage, 0), 100)}%` }}
               ></div>
             </div>
           </div>
@@ -254,7 +283,7 @@ export default function SystemStatus({ isDark }: SystemStatusProps) {
             }`}>
               <div
                 className="h-1.5 rounded-full bg-cyan-500 transition-all duration-500"
-                style={{ width: `${Math.min(systemInfo.diskUsage, 100)}%` }}
+                style={{ width: `${Math.min(Math.max(systemInfo.diskUsage, 0), 100)}%` }}
               ></div>
             </div>
           </div>
