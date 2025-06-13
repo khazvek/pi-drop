@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, File, X, Download, Trash2, AlertTriangle, Image, FileText, Music, Video, Archive, Code } from 'lucide-react';
 
 interface UploadedFile {
@@ -89,7 +89,13 @@ export default function FileUpload({ isDark }: FileUploadProps) {
   }, [handleFiles]);
 
   const removeFile = useCallback((id: string) => {
-    setFiles(prev => prev.filter(file => file.id !== id));
+    setFiles(prev => {
+      const file = prev.find(f => f.id === id);
+      if (file) {
+        URL.revokeObjectURL(file.url);
+      }
+      return prev.filter(f => f.id !== id);
+    });
   }, []);
 
   const downloadFile = useCallback((file: UploadedFile) => {
@@ -100,7 +106,10 @@ export default function FileUpload({ isDark }: FileUploadProps) {
   }, []);
 
   const clearAllFiles = useCallback(() => {
-    setFiles([]);
+    setFiles(prev => {
+      prev.forEach(file => URL.revokeObjectURL(file.url));
+      return [];
+    });
     setShowDeleteConfirm(false);
   }, []);
 
@@ -113,6 +122,12 @@ export default function FileUpload({ isDark }: FileUploadProps) {
   const closePreview = useCallback(() => {
     setPreviewFile(null);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      files.forEach(file => URL.revokeObjectURL(file.url));
+    };
+  }, [files]);
 
   return (
     <div className={`rounded-lg border transition-colors duration-200 ${
