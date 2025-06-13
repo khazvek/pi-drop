@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Send, MessageSquare, Trash2, Clock, AlertTriangle } from 'lucide-react';
 
 interface Message {
@@ -16,20 +16,53 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     const savedMessages = localStorage.getItem('kaury-messages');
     if (savedMessages) {
       try {
         const parsed = JSON.parse(savedMessages);
-        setMessages(parsed.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp)
-        })));
+        setMessages(
+          parsed.map((msg: any) => ({ ...msg, timestamp: new Date(msg.timestamp) }))
+        );
       } catch (e) {
         console.error('Error loading messages:', e);
       }
     }
+
+    const url =
+      (import.meta as any).env.VITE_WS_URL || `ws://${location.hostname}:3001`;
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'init') {
+          setMessages(
+            data.messages.map((msg: any) => ({
+              ...msg,
+              timestamp: new Date(msg.timestamp),
+            }))
+          );
+        } else if (data.type === 'message') {
+          const msg = {
+            ...data.message,
+            timestamp: new Date(data.message.timestamp),
+          } as Message;
+          setMessages((prev) => [msg, ...prev]);
+        } else if (data.type === 'clear') {
+          setMessages([]);
+        }
+      } catch (err) {
+        console.error('WebSocket message error:', err);
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -46,8 +79,13 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
       timestamp: new Date(),
       sender: 'Mobile Device'
     };
-
-    setMessages(prev => [message, ...prev]);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({ type: 'message', message })
+      );
+    } else {
+      setMessages(prev => [message, ...prev]);
+    }
     setNewMessage('');
   }, [newMessage]);
 
@@ -56,6 +94,9 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
   }, []);
 
   const clearAllMessages = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'clear' }));
+    }
     setMessages([]);
     setShowDeleteConfirm(false);
   }, []);
