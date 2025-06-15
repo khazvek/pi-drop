@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "server": "node server.js",
+    "server": "node server.cjs",
     "start": "npm run build && npm run server"
   },
   "dependencies": {
