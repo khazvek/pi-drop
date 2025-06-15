@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Send, MessageSquare, Trash2, Clock, AlertTriangle } from 'lucide-react';
+import { Send, MessageSquare, Trash2, Clock, AlertTriangle, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Message {
   id: string;
   text: string;
-  timestamp: Date;
+  timestamp: string;
   sender: string;
 }
 
@@ -16,42 +16,46 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    const savedMessages = localStorage.getItem('kaury-messages');
-    if (savedMessages) {
-      try {
-        const parsed = JSON.parse(savedMessages);
-        setMessages(
-          parsed.map((msg: any) => ({ ...msg, timestamp: new Date(msg.timestamp) }))
-        );
-      } catch (e) {
-        console.error('Error loading messages:', e);
-      }
-    }
+  const showNotification = useCallback((type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 3000);
+  }, []);
 
-    const url =
-      (import.meta as any).env.VITE_WS_URL || `ws://${location.hostname}:3001`;
-    const ws = new WebSocket(url);
+  const connectWebSocket = useCallback(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+    
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setConnectionStatus('connected');
+      showNotification('success', 'Connected to messaging server');
+      
+      // Clear any existing reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log('WebSocket message received:', data);
+        
         if (data.type === 'init') {
-          setMessages(
-            data.messages.map((msg: any) => ({
-              ...msg,
-              timestamp: new Date(msg.timestamp),
-            }))
-          );
+          setMessages(data.messages || []);
         } else if (data.type === 'message') {
-          const msg = {
-            ...data.message,
-            timestamp: new Date(data.message.timestamp),
-          } as Message;
-          setMessages((prev) => [msg, ...prev]);
+          setMessages((prev) => [data.message, ...prev]);
         } else if (data.type === 'clear') {
           setMessages([]);
         }
@@ -60,44 +64,63 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
       }
     };
 
-    return () => {
-      ws.close();
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setConnectionStatus('disconnected');
+      showNotification('error', 'Disconnected from messaging server');
+      
+      // Attempt to reconnect after 3 seconds
+      reconnectTimeoutRef.current = setTimeout(() => {
+        console.log('Attempting to reconnect...');
+        setConnectionStatus('connecting');
+        connectWebSocket();
+      }, 3000);
     };
-  }, []);
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setConnectionStatus('disconnected');
+    };
+  }, [showNotification]);
 
   useEffect(() => {
-    localStorage.setItem('kaury-messages', JSON.stringify(messages));
-  }, [messages]);
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
+  }, [connectWebSocket]);
 
   const sendMessage = useCallback(() => {
     const text = newMessage.trim();
     if (!text) return;
 
     const message: Message = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
       text,
-      timestamp: new Date(),
-      sender: 'Mobile Device'
+      timestamp: new Date().toISOString(),
+      sender: `Device-${Math.random().toString(36).substr(2, 4)}`
     };
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({ type: 'message', message })
-      );
-    } else {
-      setMessages(prev => [message, ...prev]);
-    }
-    setNewMessage('');
-  }, [newMessage]);
 
-  const deleteMessage = useCallback((id: string) => {
-    setMessages(prev => prev.filter(msg => msg.id !== id));
-  }, []);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'message', message }));
+      setNewMessage('');
+    } else {
+      showNotification('error', 'Cannot send message: Not connected to server');
+    }
+  }, [newMessage, showNotification]);
 
   const clearAllMessages = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'clear' }));
+    } else {
+      setMessages([]);
     }
-    setMessages([]);
     setShowDeleteConfirm(false);
   }, []);
 
@@ -108,12 +131,37 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
     }
   }, [sendMessage]);
 
+  const formatTimestamp = useCallback((timestamp: string) => {
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString();
+    } catch {
+      return 'Invalid date';
+    }
+  }, []);
+
   return (
     <div className={`rounded-lg border transition-colors duration-200 ${
       isDark 
         ? 'bg-gray-800 border-gray-700' 
         : 'bg-white border-gray-200'
     }`}>
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center space-x-2 ${
+          notification.type === 'success'
+            ? 'bg-green-600 text-white'
+            : 'bg-red-600 text-white'
+        }`}>
+          {notification.type === 'success' ? (
+            <CheckCircle className="h-5 w-5" />
+          ) : (
+            <AlertCircle className="h-5 w-5" />
+          )}
+          <span>{notification.message}</span>
+        </div>
+      )}
+
       <div className={`p-4 border-b flex justify-between items-center ${
         isDark ? 'border-gray-700' : 'border-gray-200'
       }`}>
@@ -126,6 +174,25 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
           }`}>
             Quick Messages
           </h3>
+          <div className="flex items-center space-x-2">
+            <div className={`h-2 w-2 rounded-full ${
+              connectionStatus === 'connected' 
+                ? 'bg-green-500 animate-pulse' 
+                : connectionStatus === 'connecting'
+                ? 'bg-yellow-500 animate-pulse'
+                : 'bg-red-500'
+            }`}></div>
+            <span className={`text-xs ${
+              connectionStatus === 'connected'
+                ? isDark ? 'text-green-400' : 'text-green-600'
+                : connectionStatus === 'connecting'
+                ? isDark ? 'text-yellow-400' : 'text-yellow-600'
+                : isDark ? 'text-red-400' : 'text-red-600'
+            }`}>
+              {connectionStatus === 'connected' ? 'Online' : 
+               connectionStatus === 'connecting' ? 'Connecting...' : 'Offline'}
+            </span>
+          </div>
         </div>
         {messages.length > 0 && (
           <button
@@ -157,12 +224,26 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
           />
           <button
             onClick={sendMessage}
-            disabled={!newMessage.trim()}
+            disabled={!newMessage.trim() || connectionStatus !== 'connected'}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded transition-colors duration-200 flex items-center space-x-1"
           >
             <Send className="h-4 w-4" />
           </button>
         </div>
+
+        {connectionStatus !== 'connected' && (
+          <div className={`p-3 rounded mb-4 ${
+            isDark ? 'bg-yellow-900/30 border border-yellow-700' : 'bg-yellow-50 border border-yellow-200'
+          }`}>
+            <p className={`text-sm ${
+              isDark ? 'text-yellow-400' : 'text-yellow-700'
+            }`}>
+              {connectionStatus === 'connecting' 
+                ? 'Connecting to messaging server...' 
+                : 'Disconnected from messaging server. Attempting to reconnect...'}
+            </p>
+          </div>
+        )}
 
         {messages.length === 0 ? (
           <div className="text-center py-8">
@@ -200,20 +281,10 @@ export default function MessageSystem({ isDark }: MessageSystemProps) {
                       <span className={`text-xs ${
                         isDark ? 'text-gray-500' : 'text-gray-400'
                       }`}>
-                        {message.timestamp.toLocaleString()}
+                        {formatTimestamp(message.timestamp)}
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => deleteMessage(message.id)}
-                    className={`p-1 rounded transition-colors duration-200 ${
-                      isDark 
-                        ? 'hover:bg-red-900/50 text-red-400' 
-                        : 'hover:bg-red-50 text-red-500'
-                    }`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
                 </div>
                 <p className={`text-sm ${
                   isDark ? 'text-gray-300' : 'text-gray-700'

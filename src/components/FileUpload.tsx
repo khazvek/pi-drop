@@ -1,13 +1,14 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, File, X, Download, Trash2, AlertTriangle, Image, FileText, Music, Video, Archive, Code } from 'lucide-react';
+import { Upload, File, X, Download, Trash2, AlertTriangle, Image, FileText, Music, Video, Archive, Code, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface UploadedFile {
   id: string;
   name: string;
   size: number;
-  type: string;
-  uploadDate: Date;
-  url: string;
+  type?: string;
+  uploadDate: string;
+  filename: string;
+  path: string;
 }
 
 interface FileUploadProps {
@@ -19,6 +20,9 @@ export default function FileUpload({ isDark }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
+  const [notification, setNotification] = useState<{type: 'success' | 'error', message: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formatFileSize = useCallback((bytes: number) => {
@@ -29,7 +33,8 @@ export default function FileUpload({ isDark }: FileUploadProps) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }, []);
 
-  const getFileIcon = useCallback((type: string) => {
+  const getFileIcon = useCallback((type?: string) => {
+    if (!type) return File;
     if (type.startsWith('image/')) return Image;
     if (type.startsWith('video/')) return Video;
     if (type.startsWith('audio/')) return Music;
@@ -39,7 +44,8 @@ export default function FileUpload({ isDark }: FileUploadProps) {
     return File;
   }, []);
 
-  const getFileIconColor = useCallback((type: string) => {
+  const getFileIconColor = useCallback((type?: string) => {
+    if (!type) return isDark ? 'text-gray-400' : 'text-gray-600';
     if (type.startsWith('image/')) return isDark ? 'text-green-400' : 'text-green-600';
     if (type.startsWith('video/')) return isDark ? 'text-red-400' : 'text-red-600';
     if (type.startsWith('audio/')) return isDark ? 'text-purple-400' : 'text-purple-600';
@@ -49,21 +55,60 @@ export default function FileUpload({ isDark }: FileUploadProps) {
     return isDark ? 'text-gray-400' : 'text-gray-600';
   }, [isDark]);
 
-  const isPreviewable = useCallback((type: string) => {
-    return type.startsWith('image/') || type.startsWith('text/') || type.includes('json');
+  const showNotification = useCallback((type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 5000);
   }, []);
 
-  const handleFiles = useCallback((fileList: FileList) => {
-    const newFiles: UploadedFile[] = Array.from(fileList).map(file => ({
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      uploadDate: new Date(),
-      url: URL.createObjectURL(file)
-    }));
-    setFiles(prev => [...prev, ...newFiles]);
+  const loadFiles = useCallback(async () => {
+    try {
+      const response = await fetch('/api/files');
+      if (response.ok) {
+        const serverFiles = await response.json();
+        setFiles(serverFiles);
+      }
+    } catch (error) {
+      console.error('Error loading files:', error);
+    }
   }, []);
+
+  useEffect(() => {
+    loadFiles();
+  }, [loadFiles]);
+
+  const uploadFiles = useCallback(async (fileList: FileList) => {
+    setUploading(true);
+    const formData = new FormData();
+    
+    Array.from(fileList).forEach(file => {
+      formData.append('files', file);
+    });
+
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          await loadFiles(); // Reload files from server
+          showNotification('success', `Successfully uploaded ${result.files.length} file(s)`);
+        } else {
+          showNotification('error', 'Upload failed: ' + result.error);
+        }
+      } else {
+        showNotification('error', 'Upload failed: Server error');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      showNotification('error', 'Upload failed: Network error');
+    } finally {
+      setUploading(false);
+      setUploadProgress({});
+    }
+  }, [loadFiles, showNotification]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -77,57 +122,65 @@ export default function FileUpload({ isDark }: FileUploadProps) {
     setDragActive(false);
     
     if (e.dataTransfer.files?.[0]) {
-      handleFiles(e.dataTransfer.files);
+      uploadFiles(e.dataTransfer.files);
     }
-  }, [handleFiles]);
+  }, [uploadFiles]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
     if (e.target.files?.[0]) {
-      handleFiles(e.target.files);
+      uploadFiles(e.target.files);
     }
-  }, [handleFiles]);
+  }, [uploadFiles]);
 
-  const removeFile = useCallback((id: string) => {
-    setFiles(prev => {
-      const file = prev.find(f => f.id === id);
-      if (file) {
-        URL.revokeObjectURL(file.url);
+  const removeFile = useCallback(async (filename: string) => {
+    try {
+      const response = await fetch(`/api/files/${filename}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        await loadFiles();
+        showNotification('success', 'File deleted successfully');
+      } else {
+        showNotification('error', 'Failed to delete file');
       }
-      return prev.filter(f => f.id !== id);
-    });
-  }, []);
+    } catch (error) {
+      console.error('Delete error:', error);
+      showNotification('error', 'Failed to delete file');
+    }
+  }, [loadFiles, showNotification]);
 
   const downloadFile = useCallback((file: UploadedFile) => {
     const link = document.createElement('a');
-    link.href = file.url;
+    link.href = file.path;
     link.download = file.name;
     link.click();
   }, []);
 
-  const clearAllFiles = useCallback(() => {
-    setFiles(prev => {
-      prev.forEach(file => URL.revokeObjectURL(file.url));
-      return [];
-    });
-    setShowDeleteConfirm(false);
-  }, []);
+  const clearAllFiles = useCallback(async () => {
+    try {
+      const deletePromises = files.map(file => 
+        fetch(`/api/files/${file.filename}`, { method: 'DELETE' })
+      );
+      
+      await Promise.all(deletePromises);
+      await loadFiles();
+      setShowDeleteConfirm(false);
+      showNotification('success', 'All files cleared successfully');
+    } catch (error) {
+      console.error('Clear all error:', error);
+      showNotification('error', 'Failed to clear all files');
+    }
+  }, [files, loadFiles, showNotification]);
 
   const openPreview = useCallback((file: UploadedFile) => {
-    if (isPreviewable(file.type)) {
-      setPreviewFile(file);
-    }
-  }, [isPreviewable]);
+    setPreviewFile(file);
+  }, []);
 
   const closePreview = useCallback(() => {
     setPreviewFile(null);
   }, []);
-
-  useEffect(() => {
-    return () => {
-      files.forEach(file => URL.revokeObjectURL(file.url));
-    };
-  }, [files]);
 
   return (
     <div className={`rounded-lg border transition-colors duration-200 ${
@@ -135,6 +188,22 @@ export default function FileUpload({ isDark }: FileUploadProps) {
         ? 'bg-gray-800 border-gray-700' 
         : 'bg-white border-gray-200'
     }`}>
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center space-x-2 ${
+          notification.type === 'success'
+            ? 'bg-green-600 text-white'
+            : 'bg-red-600 text-white'
+        }`}>
+          {notification.type === 'success' ? (
+            <CheckCircle className="h-5 w-5" />
+          ) : (
+            <AlertCircle className="h-5 w-5" />
+          )}
+          <span>{notification.message}</span>
+        </div>
+      )}
+
       <div className={`p-4 border-b flex justify-between items-center ${
         isDark ? 'border-gray-700' : 'border-gray-200'
       }`}>
@@ -166,12 +235,12 @@ export default function FileUpload({ isDark }: FileUploadProps) {
             : isDark
               ? 'border-gray-600'
               : 'border-gray-300'
-        }`}
+        } ${uploading ? 'pointer-events-none opacity-50' : ''}`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => !uploading && fileInputRef.current?.click()}
       >
         <Upload className={`mx-auto h-8 w-8 mb-3 ${
           isDark ? 'text-gray-400' : 'text-gray-500'
@@ -179,10 +248,18 @@ export default function FileUpload({ isDark }: FileUploadProps) {
         <p className={`text-sm mb-2 ${
           isDark ? 'text-gray-300' : 'text-gray-700'
         }`}>
-          Drop files or click to upload
+          {uploading ? 'Uploading files...' : 'Drop files or click to upload'}
         </p>
-        <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm transition-colors duration-200">
-          Choose Files
+        <p className={`text-xs mb-3 ${
+          isDark ? 'text-gray-500' : 'text-gray-400'
+        }`}>
+          Maximum file size: 25GB per file
+        </p>
+        <button 
+          disabled={uploading}
+          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded text-sm transition-colors duration-200"
+        >
+          {uploading ? 'Uploading...' : 'Choose Files'}
         </button>
         <input
           ref={fileInputRef}
@@ -209,35 +286,17 @@ export default function FileUpload({ isDark }: FileUploadProps) {
                     }`}
                   >
                     <div className="flex items-start space-x-3">
-                      {/* File Preview/Icon */}
-                      <div className="flex-shrink-0">
-                        {file.type.startsWith('image/') ? (
-                          <div 
-                            className="w-12 h-12 rounded cursor-pointer overflow-hidden border"
-                            onClick={() => openPreview(file)}
-                          >
-                            <img 
-                              src={file.url} 
-                              alt={file.name}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                        ) : (
-                          <div className={`w-12 h-12 rounded flex items-center justify-center ${
-                            isDark ? 'bg-gray-600' : 'bg-gray-200'
-                          }`}>
-                            <FileIcon className={`h-6 w-6 ${iconColor}`} />
-                          </div>
-                        )}
+                      <div className={`w-12 h-12 rounded flex items-center justify-center ${
+                        isDark ? 'bg-gray-600' : 'bg-gray-200'
+                      }`}>
+                        <FileIcon className={`h-6 w-6 ${iconColor}`} />
                       </div>
 
-                      {/* File Info */}
                       <div className="min-w-0 flex-1">
                         <p 
                           className={`text-sm font-medium truncate cursor-pointer ${
                             isDark ? 'text-white hover:text-blue-400' : 'text-gray-900 hover:text-blue-600'
-                          } ${isPreviewable(file.type) ? 'hover:underline' : ''}`}
-                          onClick={() => isPreviewable(file.type) && openPreview(file)}
+                          }`}
                           title={file.name}
                         >
                           {file.name}
@@ -249,19 +308,6 @@ export default function FileUpload({ isDark }: FileUploadProps) {
                             {formatFileSize(file.size)}
                           </p>
                           <div className="flex items-center space-x-1">
-                            {isPreviewable(file.type) && (
-                              <button
-                                onClick={() => openPreview(file)}
-                                className={`p-1 rounded transition-colors duration-200 ${
-                                  isDark 
-                                    ? 'hover:bg-gray-600 text-gray-400' 
-                                    : 'hover:bg-gray-200 text-gray-500'
-                                }`}
-                                title="Preview"
-                              >
-                                <Image className="h-3 w-3" />
-                              </button>
-                            )}
                             <button
                               onClick={() => downloadFile(file)}
                               className={`p-1 rounded transition-colors duration-200 ${
@@ -274,7 +320,7 @@ export default function FileUpload({ isDark }: FileUploadProps) {
                               <Download className="h-3 w-3" />
                             </button>
                             <button
-                              onClick={() => removeFile(file.id)}
+                              onClick={() => removeFile(file.filename)}
                               className={`p-1 rounded transition-colors duration-200 ${
                                 isDark 
                                   ? 'hover:bg-red-900/50 text-red-400' 
@@ -291,75 +337,6 @@ export default function FileUpload({ isDark }: FileUploadProps) {
                   </div>
                 );
               })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* File Preview Modal */}
-      {previewFile && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className={`rounded-lg max-w-4xl max-h-[90vh] w-full overflow-hidden ${
-            isDark ? 'bg-gray-800' : 'bg-white'
-          }`}>
-            <div className={`p-4 border-b flex justify-between items-center ${
-              isDark ? 'border-gray-700' : 'border-gray-200'
-            }`}>
-              <h3 className={`text-lg font-semibold truncate ${
-                isDark ? 'text-white' : 'text-gray-900'
-              }`}>
-                {previewFile.name}
-              </h3>
-              <button
-                onClick={closePreview}
-                className={`p-2 rounded transition-colors duration-200 ${
-                  isDark 
-                    ? 'hover:bg-gray-700 text-gray-400' 
-                    : 'hover:bg-gray-100 text-gray-500'
-                }`}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="p-4 max-h-[70vh] overflow-auto">
-              {previewFile.type.startsWith('image/') ? (
-                <img 
-                  src={previewFile.url} 
-                  alt={previewFile.name}
-                  className="max-w-full h-auto mx-auto rounded"
-                />
-              ) : previewFile.type.startsWith('text/') || previewFile.type.includes('json') ? (
-                <div className={`p-4 rounded font-mono text-sm ${
-                  isDark ? 'bg-gray-900 text-gray-300' : 'bg-gray-100 text-gray-800'
-                }`}>
-                  <iframe 
-                    src={previewFile.url} 
-                    className="w-full h-96 border-0"
-                    title={previewFile.name}
-                  />
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <File className={`mx-auto h-16 w-16 mb-4 ${
-                    isDark ? 'text-gray-600' : 'text-gray-400'
-                  }`} />
-                  <p className={`text-sm ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`}>
-                    Preview not available for this file type
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className={`p-4 border-t flex justify-end space-x-3 ${
-              isDark ? 'border-gray-700' : 'border-gray-200'
-            }`}>
-              <button
-                onClick={() => downloadFile(previewFile)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm transition-colors duration-200"
-              >
-                Download
-              </button>
             </div>
           </div>
         </div>
