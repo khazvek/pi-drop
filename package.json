@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server.cjs",
-    "start": "npm run build && npm run server"
+    "start": "npm run build && npm run server",
+    "start:dev": "concurrently \"npm run dev\" \"npm run server\"",
+    "start:prod": "npm run build && npm run server"
   },
   "dependencies": {
     "lucide-react": "^0.344.0",
@@ -18,7 +20,8 @@
     "ws": "^8.17.0",
     "multer": "^1.4.5-lts.1",
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "concurrently": "^7.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
